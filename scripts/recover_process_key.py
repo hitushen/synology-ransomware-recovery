@@ -13,6 +13,10 @@ import stat
 import struct
 
 
+class NoKeyMaterial(ValueError):
+    """Reviewed readable mappings contain an empty pointer or IV/key material."""
+
+
 def read_va(root, regions, address, size):
     if address < 0 or size <= 0 or size > 4096:
         raise ValueError('Invalid bounded virtual read')
@@ -70,10 +74,10 @@ def recover(directory, profile, destination):
         raise ValueError('Unsupported runtime crypto mode')
     pointer = struct.unpack('<Q', reader(profile['master_pointer_va'], 8))[0]
     if not pointer:
-        raise ValueError('Master pointer is empty')
+        raise NoKeyMaterial('Master pointer is empty')
     material = reader(pointer, 48)
     if not any(material[:16]) or not any(material[16:]):
-        raise ValueError('Empty IV or AES material')
+        raise NoKeyMaterial('Empty IV or AES material')
     destination = Path(destination); destination.mkdir(mode=0o700)
     path = destination/'master-candidate.bin'
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)

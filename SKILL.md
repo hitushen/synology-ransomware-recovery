@@ -1,6 +1,6 @@
 ---
 name: synology-ransomware-recovery
-description: 群晖 DSM、黑群晖或 Linux NAS 遭 C3RB3R/.L0CK3D 勒索后的综合恢复。按未重启与已重启、进程存活、既有内存转储及 key/IV 分类，集成 Solar 工具、内存保全、副本解密、Telnet 救援入口、Btrfs 旧块及 Drive/备份恢复。适用于重启后提示重新安装 DSM 的数据抢救；不同样本须先验证兼容性。
+description: 群晖 DSM、黑群晖或 Linux NAS 遭 C3RB3R/.L0CK3D 勒索后的综合恢复。按未重启与已重启、进程存活、既有内存转储及 key/IV 分类，集成统一内存密钥检查、Solar 工具、内存保全、副本解密、SSH/Telnet 救援入口、Btrfs 旧块及 Drive/备份恢复。适用于重启后提示重新安装 DSM 的数据抢救；不同样本须先验证兼容性。
 ---
 
 # 群晖勒索数据恢复
@@ -12,6 +12,8 @@ description: 群晖 DSM、黑群晖或 Linux NAS 遭 C3RB3R/.L0CK3D 勒索后的
 **执行与报告约束：不自动重启系统，不运行恶意样本，不写回受灾卷；恢复文件、日志、进度和缓存均写到独立目的存储。向用户明确区分已验证结果、候选、部分恢复、失败与未验证项，并说明每项实际通过的检查和仍未覆盖的范围。文件头、退出码或阶段进度不能代替完整验收。**
 
 ## 首轮判断
+
+**未重启与已重启都先检查密钥线索。** 未重启优先保存进程/整机内存；已重启先盘点旧 dump、私有 key.sys / key / IV 与实际 swap 残留。只剩新 RAM 时记录其为重启后材料，不宣称代表旧现场。没有材料属于无法评估，不等于已证明没有密钥。
 
 从已有会话、报告和现场读取信息，只问仍缺少的关键项：目标 IP/设备类型，事件与重启时间，当前进程状态，现有 RAM/进程 dump/swap/key 文件，文件系统与阵列状态，重要目录、验收要求及独立目的盘。未知重启历史时按仍可能存在易失密钥处理；不要为确认环境重启。
 
@@ -39,6 +41,7 @@ description: 群晖 DSM、黑群晖或 Linux NAS 遭 C3RB3R/.L0CK3D 勒索后的
 
 - **现场保全**：读 [保全与内存](references/containment-memory.md)。QEMU/PVE 用 `scripts/capture_qemu_ram.py`；物理 DSM/Linux 或进程映射读 [物理机内存](references/physical-memory_CN.md)，使用 `capture_process_memory.py`，再按真实内核条件选择 AVML/LiME。采集优先于完整归因；不要安装工具到受灾池。
 - **Solar 公号工具**：读 [Solar 工具接入](references/solar-tool.md)。附 `assets/solar/c3rb3r_memscan.sys` 与来源收据，适配文中 ELF64 x86-64 样本。在线扫描、已有 key/IV 和旧 dump 三种入口分别处理。此二进制只做过下载、哈希和静态检查，不称为已实机验证。所有解密使用独立副本及 `--keep-source`。
+- **统一内存密钥检查**：读 [内存密钥检查](references/memory-key-check.md)，使用 `scripts/memory_key_check.py` 对保存的进程映射、已核实 QEMU 或 raw/LiME/ELF 字节副本检查。按实际类型提取或结构筛选，区分未能评估、本方法未找到、找到候选与指定文件完整验证通过；候选只写私有目录，stdout 只显示状态和计数。重启/未重启都执行适用的材料检查，不盲扫不存在的旧内存。
 - **静态逆向与离线提取**：读 [逆向与解密](references/reverse-decrypt.md)。`recover_ram_keys.py` 对应已审阅的 QEMU 映射，`recover_process_key.py` 对应保存的进程 VA 映射；LiME 用 `inspect_lime.py` 检查。`assets/libgld-802ac85d.json` 的地址与 PCI hole 仅属于该样本/环境。
 - **无有效密钥／独立副本搜索／Btrfs**：读 [无密钥恢复流程](references/no-key-workflow.md) 与 [Btrfs 验证边界](references/btrfs-recovery_CN.md)。还可根据线索调查客户端/异地副本、事故前离线成员、独立镜像文件特征及应用级重建；外部雕刻/采集工具仅提供条件指引，不宣称内置或已实机验证。内置 `scripts/c3r_btrfs.py`、`mkjob.py`、`c3r_local.py`，可执行自检、普查、规划、导出和校验。未挂载的救援卷走独立离线映射验证，不能谎称挂载模式 preflight 已通过。
 - **目录、传输与大批量作业**：读 [批次与验收](references/export-verify.md)。优先列目录让用户选择；沿用已选范围和取消项。SSH 传输使用验证过的字节流；只有 Telnet 时采用编码分块或受控单次传输并核对长度与摘要，不能直接把终端当无损二进制管道。

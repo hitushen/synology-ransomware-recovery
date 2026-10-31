@@ -12,7 +12,7 @@
 >
 > **尚未重启时，优先保住易失密钥。** 不贸然关机、重启、升级或终止加密进程；先确认进程身份、暂停加密活动并核对状态，再尽快保全内存。
 
-技能入口：[SKILL.md](SKILL.md) · 实时进度：[使用说明](references/live-progress.md) · 恢复验收：[验证标准](references/export-verify.md) · 致谢：[项目与贡献](#致谢) · 第三方来源：[版权与接入说明](THIRD_PARTY_NOTICES.md)
+技能入口：[SKILL.md](SKILL.md) · 内存密钥：[统一检查](references/memory-key-check.md) · 实时进度：[使用说明](references/live-progress.md) · 恢复验收：[验证标准](references/export-verify.md) · 致谢：[项目与贡献](#致谢) · 第三方来源：[版权与接入说明](THIRD_PARTY_NOTICES.md)
 
 ## 先看你的情况
 
@@ -26,6 +26,8 @@
 | 任一状态 | 只有 AES key，或只有 IV | 材料不完整，寻找缺失部分；不能补零或混用其他会话材料 |
 | 任一状态 | 每文件 ChaCha key + nonce | 另行确认目标文件、算法与计数器规则，不能当作会话 AES 主材料 |
 | 任一状态 | 公共密钥候选、未知变种、重复加密 | 先做样本与完整文件验证；相同后缀或 marker 不证明密钥通用 |
+
+**重启与未重启都检查可用密钥线索。** 已重启时优先旧内存、key.sys / key / IV 和实际 swap 残留；没有旧材料时如实登记无法评估，不把新 RAM 当作旧现场。
 
 **重启不使已经保存的正确 key / IV 失效；没有密钥，也不代表没有其他恢复路线。** 实际能恢复哪些文件，需要逐项验证，不能从表格直接推定成功率。
 
@@ -53,6 +55,7 @@ flowchart TD
 |---|---|
 | 现场保全 | 依据重启历史、进程身份、设备类型和管理链路选择保全方式 |
 | 救援入口 | 沿用已提供的 SSH 或 Telnet；入口未知或失效时检查指定主机端口，区分连接、登录与存储状态 |
+| 内存密钥检测 | 保存的进程映射、QEMU 与字节结构扫描；区分未评估、未找到、候选和指定文件验证通过 |
 | 密钥材料 | 区分 AES key / IV、raw48、Solar key.sys、每文件 key / nonce 和公共候选 |
 | 副本解密 | 绑定已审阅的文件格式与会话 marker，拒绝覆盖、未知模式及不完整尾部 |
 | Solar 工具接入 | 整理在线 PID 扫描、旧 dump 分析和已有会话材料三个入口及适用限制 |
@@ -127,7 +130,19 @@ python -X utf8 scripts/probe_rescue_ports.py --host 192.168.200.2 --output new-p
 
 只做指定主机的有界 TCP 连接测试，不登录、不猜口令、不启用服务。`192.168.200.2` 是私有地址示例，使用时改成当前 NAS 地址；端口开放不证明服务身份或设备可信。
 
-### 2. 准备已有 key / IV
+### 2. 检查内存中的密钥线索
+
+先保全内存，再对保存的副本检查。进程映射集合可这样运行：
+
+```sh
+python -X utf8 scripts/memory_key_check.py --input saved-process --format process-maps --capture-origin not-rebooted --output new-private-key-check --progress-file new-memory-progress.json
+```
+
+重启前的旧 dump 同样检查，标注 `--capture-origin pre-reboot`。QEMU 页表提取须明确 `--format qemu` 与匹配的 profile；raw、LiME 和 ELF 字节扫描仅搜索支持的结构，不把没有命中解释成所有内存都没有密钥。
+
+输出分别显示 `not_assessed`、`not_found`、`candidate_found` 或 `verified_for_file`。候选可结合独立密文副本、已审阅 marker、已知原件 SHA 或完整归档验证；仅尾部一致仍是候选。真实 key / IV 只保存到私有文件，详细命令与范围见 [内存密钥检查](references/memory-key-check.md)。
+
+### 3. 准备已有 key / IV
 
 私有 JSON 使用 `aes_key_hex`（64个十六进制字符）与 `aes_iv_hex`（32个十六进制字符）字段；真实材料保存在私有文件，不放命令行或聊天。
 
@@ -138,7 +153,7 @@ python -X utf8 scripts/prepare_session_key.py --input key.sys --format solar-key
 
 输出为已识别样本使用的 `IV16 + AES-key32`，共48字节。格式与长度合格仍不代表材料正确；单有 AES key 或单有 IV 不足以执行此流程。更多类型见 [密钥材料说明](references/key-materials.md)。
 
-### 3. 单文件副本解密
+### 4. 单文件副本解密
 
 先检查尾部并确认样本适配，再显式绑定该会话的 marker：
 
@@ -152,7 +167,7 @@ python -X utf8 scripts/decrypt_copy.py --copy-root copies --input-copy copies/ex
 
 有同版本独立原件摘要时加入 `--expected-sha256`。成功写出后继续做完整文件检查；**错误 IV 可能通过重复 nonce 检查**，不能只凭密钥记录可解析就宣布恢复成功。
 
-### 4. 导出与验证
+### 5. 导出与验证
 
 ```sh
 python -X utf8 scripts/c3r_local.py extract export.tar new-candidates --progress-file new-export-progress.json
@@ -162,7 +177,7 @@ python -X utf8 scripts/verify_backup.py new-example.tar.gz --progress-file new-a
 
 `extract` 使用新目录，拒绝覆盖、重复成员、链接与越界路径。归档检查读取完整 gzip / TAR 数据流，并检查 CRC、结束块与尾部。格式未检查的文件单列未验证，已知原件不匹配不计为通过。
 
-### 5. 打开实时进度
+### 6. 打开实时进度
 
 在另一个本地终端查看一个或多个阶段：
 
@@ -222,11 +237,12 @@ python -X utf8 scripts/recovery_progress.py watch new-export-progress.json new-a
 
 - 13项恢复辅助回归：密钥格式、完整副本解密、错误 IV、归档截断、陈旧摘要、路径/覆盖拒绝及 Windows 保存映射读取。
 - 10项实时进度测试：百分比/速度/ETA、未知总量、状态文件保护、网页转义、字节管道、失败状态与验收去重。
+- 17项内存检测测试：真实合成进程映射与 QEMU 页表提取、跨窗口扫描、LiME 空洞、候选去重、错误 IV、完整副本验证、未适配/缺页与阴性区分、输入保护、秘密输出隔离及无加密正文边界。
 - 独立场景复核和技能结构/引用检查。
 
 上述测试以独立的本地合成材料执行。恢复案例的证据与这些软件测试分别登记；**Solar 二进制只完成官方来源获取、SHA-256 与静态检查，未由本次技能构建执行实机验收。** Linux 现场操作与不同 RAID、缓存、dump、备份版本仍需现场验证。
 
-在干净分析机安装解密所需依赖后，可从本技能根目录复现23项测试：
+在干净分析机安装解密所需依赖后，可从本技能根目录复现40项测试：
 
 ```sh
 python -X utf8 -m unittest discover -s tests -v

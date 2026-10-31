@@ -43,3 +43,11 @@ __pycache__/
 venv/
 .DS_Store
 Thumbs.db
+
+# Private memory-key checking outputs
+/new-private-*/
+**/memory-key-report.json
+**/candidate.json
+**/scan-report.json
+**/capture.json
+**/verification-*.plain

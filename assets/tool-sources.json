@@ -29,7 +29,9 @@
     "portable saved-memory file opening",
     "explicit private key normalization",
     "bounded rescue port probes",
-    "real-time stage progress and local live viewer"
+    "real-time stage progress and local live viewer",
+    "unified saved-memory candidate checking, provenance, scoped byte-pattern scans and independent whole-copy validation",
+    "typed empty process master-material outcome without weakening mapping verification"
   ],
   "nas_validation": "not performed in this skill creation task"
 }
