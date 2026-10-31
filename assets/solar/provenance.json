@@ -1,0 +1,16 @@
+{
+  "publisher": "Solar incident response team",
+  "tool_id": "S28L0c-111",
+  "article_url": "https://mp.weixin.qq.com/s/MhVPW1c1n3FcubvkwGrzkA",
+  "official_landing_page": "https://xn--vvr70uba61n.com/tools/S28L0c-111",
+  "download_url": "https://solar-www.oss-cn-qingdao.aliyuncs.com/solar2/uploads/uploads/tools/20261031_1793412049162711516.zip",
+  "retrieved_date": "2026-10-31",
+  "archive_sha256": "8904c90c2f1f2122499cbb9dba4d1b88d619d2112833cae6e2f59b2cbd082c9a",
+  "binary_sha256": "6376fb498cddc54220ae3381fe927a26eaa82c70f0f5647c72b057b7d904a6c9",
+  "binary_bytes": 741328,
+  "execution_status": "not executed; static ELF and strings inspection only",
+  "publisher_checksum_available": false,
+  "redistribution_license": "not established; third-party copyright retained; outside project MIT scope",
+  "binary_included": false,
+  "distribution": "included in installed skill, GitHub repository and release bundle"
+}

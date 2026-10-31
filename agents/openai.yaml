@@ -1,0 +1,4 @@
+interface:
+  display_name: "Synology 勒索恢复"
+  short_description: "按重启与密钥材料分流，集成 Solar 工具、Telnet 救援、Drive 与旧块恢复"
+  default_prompt: "使用 $synology-ransomware-recovery，根据重启历史、进程状态和现有 key/IV 或转储选择恢复路线，在独立存储验证并导出数据。"

@@ -1,0 +1,35 @@
+{
+  "date": "2026-10-31",
+  "community_tools": [
+    {
+      "file": "scripts/c3r_btrfs.py",
+      "source_repository": "https://github.com/crt106/c3rb3r-btrfs-recovery",
+      "source_sha256": "cc356fb6bf57b033a36a8b1115e6048364f0651e84b50f9f213a3a02d919eede",
+      "bundled_sha256": "cc356fb6bf57b033a36a8b1115e6048364f0651e84b50f9f213a3a02d919eede",
+      "local_changes": "none"
+    },
+    {
+      "file": "scripts/c3r_local.py",
+      "source_repository": "https://github.com/crt106/c3rb3r-btrfs-recovery",
+      "source_sha256": "68770f85170352388e354d296506e51e57dde3dafb504c4fa974f9f473b6e13c",
+      "bundled_sha256": "68e640bc07477af38044745dffb8d13b4bef03502bd47393d35dd0aa758081aa",
+      "local_changes": "exclusive new output extraction; no traversal/links/overwrite; independent reread hashes; unverified and conflicting originals not accepted; live progress with completion-order updates and accepted-source deduplication; explicit binary subprocess decoding"
+    },
+    {
+      "file": "scripts/mkjob.py",
+      "source_repository": "https://github.com/crt106/c3rb3r-btrfs-recovery",
+      "source_sha256": "75adceb8fffda1dcdd0dac9c04a2f0a4afb90b727a79292fe0eeeace5a83f55f",
+      "bundled_sha256": "75adceb8fffda1dcdd0dac9c04a2f0a4afb90b727a79292fe0eeeace5a83f55f",
+      "local_changes": "none"
+    }
+  ],
+  "existing_rescue_source": "https://github.com/soimy/c3rb3r-rescue",
+  "local_rescue_changes": [
+    "strict TAR/gzip validation",
+    "portable saved-memory file opening",
+    "explicit private key normalization",
+    "bounded rescue port probes",
+    "real-time stage progress and local live viewer"
+  ],
+  "nas_validation": "not performed in this skill creation task"
+}

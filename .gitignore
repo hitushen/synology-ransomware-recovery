@@ -1,0 +1,45 @@
+# Private acquisition, recovery output and workspaces
+/evidence/
+/recovered/
+/copies/
+/candidates/
+/external/
+/private/
+/work/
+
+# Secrets, memory, samples and generated archives
+key.sys
+*.key
+*.pem
+*.bin
+*.raw
+*.mem
+*.dump
+*.lime
+*.L0CK3D
+*.tar
+*.tar.gz
+*.txz
+*.xz
+*.zip
+*.7z
+*.sqlite
+*.sqlite-*
+*.log
+.env
+.env.*
+
+# Official Solar recovery tool is included under assets/solar/.
+
+# Live status and reports
+*-progress.json
+*-progress.html
+new-live-progress.html
+
+# Python and editor state
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.DS_Store
+Thumbs.db
