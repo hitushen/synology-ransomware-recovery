@@ -19,6 +19,7 @@ import uuid
 from c3r_local import cmd_extract, cmd_validate, validation_lock
 from recovery_progress import Progress, atomic_text
 from verify_backup import validate
+from summarize_exceptions import write_report
 
 
 def fingerprint(path):
@@ -80,6 +81,7 @@ def _run_locked(source, root, identity, *, workers, known, resume, progress_file
             return {'status': 'already_completed', 'previous_status': state['status'],
                     'verification_time_utc': state['verification_time_utc'],
                     'summary': state['summary'], 'new_checks_run': False,
+                    'ai_review': state.get('ai_review_file'),
                     'limits': 'Returns prior receipts; does not revalidate subsequently changed files'}
         state['validated'] = False
     else:
@@ -121,10 +123,16 @@ def _run_locked(source, root, identity, *, workers, known, resume, progress_file
             state.update(stage='validate', status='running'); write_state(root, state)
             summary = cmd_validate(types.SimpleNamespace(out=str(candidates), known=known_paths,
                                    workers=workers, resume=resume, progress=progress))
+            state.update(stage='exception_summary'); write_state(root, state)
+            # One compact hand-off after the scripted pass; normal candidate
+            # failures never require an AI/API round trip inside the loop.
+            review_file = root / ('ai-review-' + summary['validation_run_id'] + '.json')
+            review = write_report(candidates / '_exceptions.jsonl', review_file)
             state.update(validated=True, summary=summary, stage='finished',
                          status='completed_with_exceptions' if summary['exceptions'] else 'completed',
                          verification_time_utc=datetime.datetime.now(datetime.timezone.utc).isoformat(),
-                         exception_file=str((candidates / '_exceptions.jsonl').resolve()))
+                         exception_file=str((candidates / '_exceptions.jsonl').resolve()),
+                         ai_review_file=review['report_path'], ai_review_needed=review['ai_review_needed'])
             write_state(root, state)
             progress.finish(state['status'])
     except BaseException as error:
@@ -136,6 +144,7 @@ def _run_locked(source, root, identity, *, workers, known, resume, progress_file
     return {'status': state['status'], 'summary': summary,
             'checkpoint': str((root / 'batch-state.json').resolve()),
             'exceptions': state['exception_file'], 'progress_file': state['progress_file'],
+            'ai_review': state['ai_review_file'], 'ai_review_needed': state['ai_review_needed'],
             'new_checks_run': True}
 
 

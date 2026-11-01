@@ -60,3 +60,5 @@ Thumbs.db
 **/_exceptions.jsonl
 **/progress-*.json
 **/_batch.lock
+**/ai-review*.json
+**/*-ai-review.json

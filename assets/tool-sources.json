@@ -36,7 +36,8 @@
     "unified saved-memory candidate checking, provenance, scoped byte-pattern scans and independent whole-copy validation",
     "typed empty process master-material outcome without weakening mapping verification",
     "continuous Btrfs archive/extract/validate pipeline with checkpoints and exception-focused agent workflow",
-    "whole-batch OS lock; outer TAR validation independent from damaged candidate payloads; 14 synthetic validation-integrity regressions"
+    "whole-batch OS lock; outer TAR validation independent from damaged candidate payloads; 14 synthetic validation-integrity regressions",
+    "script-only normal batch loop; bounded private post-batch AI exception summaries; 9 synthetic hand-off regressions"
   ],
   "nas_validation": "not performed in this skill creation task",
   "updated_date": "2026-11-01"
