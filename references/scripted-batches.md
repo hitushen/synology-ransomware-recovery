@@ -13,7 +13,7 @@
 
 ## 已保存 Btrfs 导出归档的连续流水线
 
-`recovery_batch.py` 接入本技能现有 Btrfs 导出格式：一个未压缩 TAR 中包含 `_c3r_manifest.jsonl` 和各候选成员。它在独立分析机依次检查完整归档、解包、并行校验，最后生成摘要与仅包含未决源文件的异常清单。
+`recovery_batch.py` 接入本技能现有 Btrfs 导出格式：一个未压缩 TAR 中包含 `_c3r_manifest.jsonl` 和各候选成员。它在独立分析机依次检查完整外层 TAR（header、全部成员长度、终止块与零尾部）、解包、并行校验。外层检查不提前解码候选 payload；单个候选归档损坏应在后续文件校验中登记，不能阻断其他文件。外层截断或非零尾部仍拒绝解包。
 
 ```sh
 python -X utf8 scripts/recovery_batch.py --export export.tar --output new-batch-recovery --workers 2 --known independent-originals --progress-file new-batch-progress.json
@@ -51,11 +51,17 @@ python -X utf8 scripts/recovery_batch.py --export export.tar --output new-batch-
 python -X utf8 scripts/c3r_local.py validate new-batch-recovery/candidates --resume --workers 2 --progress-file resumed-validation-progress.json
 ```
 
-省略 `--resume` 会重新做完整检查。每次恢复使用新的进度文件，既有工作结果与检查点均保留。校验器对同一目的目录加 OS 文件锁；同一批次不启动第二个并行校验器。
+省略 `--resume` 会重新做完整检查。每次恢复使用新的进度文件，既有工作结果与检查点均保留。批次根目录的 `_batch.lock` 在读取检查点前取得 OS 锁，覆盖归档检查、解包、校验及最终收据；候选目录另有 `_validation.lock`，防止独立校验器同时进入。竞争进程失败时不改写活动任务的状态或进度；锁由 OS 在进程退出后释放，残留锁文件不意味着任务仍在运行。
 
 ## 异常与验收
 
-`_exceptions.jsonl` 只列出未解决的源文件：导出未取得、校验失败、未知格式、推测/部分结果及未适配异常。worker 的普通读取/解析异常转为失败项，其他任务继续；执行器整体故障保存检查点后交给 agent。
+`_exceptions.jsonl` 在当前运行开始时重建；每个源文件的所有候选完成后立即写入并 flush，包含 `source_complete=true` 和 `validation_run_id`。同一源文件早期坏候选不会在好候选尚未完成时触发人工异常。agent 按当前进度任务/运行 ID 与文件偏移增量消费完整 JSONL 行；重新校验时重置消费位置，末条不完整行等待补齐。运行中没有异常记录不代表整批完成，完成以批次状态为准。
+
+该清单只列出未解决的源文件：导出未取得、校验失败、未知格式、推测/部分结果及未适配异常。worker 的普通读取/解析异常转为失败项，其他任务继续；执行器整体故障保存检查点后交给 agent。
+
+支持的图片逐帧/逐页 load，ffmpeg 映射全部音频与视频流；字幕、附件、业务语义和历史字节一致性不属于媒体解码证明。TAR/gzip 候选使用完整归档审计，未支持格式仍保留未验证。
+
+候选经过完整解码或原件对照后再次回读 SHA，并检查设备/inode/大小/时间变化；同版本原件匹配时同样复读其内容，防止保留 mtime 的写入被当作通过。此步骤增加必要的 I/O；SHA 与格式检查仍是该次检查的收据，验收期间保持候选及原件静止，后续改写需重新校验。成功解码的续查可复用原收据，当前内容核对仍保留。
 
 agent 从异常清单选出值得处理的组，标明原因、已有证据、新线索和下一步。没有新材料，不自动无限重试同一个失败对象，也不重审所有成功日志。已完成/已取消任务不重新入队；多个候选按原文件身份去重。
 

@@ -12,10 +12,11 @@ import os
 from pathlib import Path
 import stat
 import sys
+import tarfile
 import types
 import uuid
 
-from c3r_local import cmd_extract, cmd_validate
+from c3r_local import cmd_extract, cmd_validate, validation_lock
 from recovery_progress import Progress, atomic_text
 from verify_backup import validate
 
@@ -53,10 +54,20 @@ def run_batch(export, output, *, workers=2, known=None, resume=False, progress_f
         raise ValueError('Batch output cannot replace the saved export')
     if workers < 1:
         raise ValueError('Workers must be positive')
+    if Path(output).is_symlink():
+        raise ValueError('Batch output cannot be a symbolic link')
+    if not resume:
+        root.mkdir(mode=0o700)
+    # Acquire before reading checkpoint or reserving progress/log files. A
+    # rejected competing invocation must not change the active task's state.
+    with validation_lock(root, '_batch.lock'):
+        return _run_locked(source, root, identity, workers=workers, known=known,
+                           resume=resume, progress_file=progress_file)
+
+
+def _run_locked(source, root, identity, *, workers, known, resume, progress_file):
     known_paths = [str(Path(path).resolve()) for path in known or []]
     if resume:
-        if Path(output).is_symlink():
-            raise ValueError('Batch output cannot be a symbolic link')
         state_path = root / 'batch-state.json'
         if state_path.is_symlink() or state_path.stat().st_size > 8*1024*1024:
             raise ValueError('Invalid batch checkpoint')
@@ -72,7 +83,6 @@ def run_batch(export, output, *, workers=2, known=None, resume=False, progress_f
                     'limits': 'Returns prior receipts; does not revalidate subsequently changed files'}
         state['validated'] = False
     else:
-        root.mkdir(mode=0o700)
         state = {'schema': 1, 'input': identity, 'archive_checked': False,
                  'extracted': False, 'validated': False, 'status': 'running'}
     state['known_directories'] = known_paths
@@ -88,7 +98,9 @@ def run_batch(export, output, *, workers=2, known=None, resume=False, progress_f
         with log_path.open('a', encoding='utf-8') as log, contextlib.redirect_stdout(log):
             if not state['archive_checked']:
                 state.update(stage='archive_check', status='running'); write_state(root, state)
-                checked = validate(source, progress=progress)
+                # Candidate payloads may be damaged. Audit the outer transport
+                # TAR here; validate each payload later without stopping peers.
+                checked = validate(source, progress=progress, inspect_tar_contents=False)
                 if not checked.get('integrity_pass'):
                     raise ValueError('Complete source archive check did not pass')
                 if fingerprint(source) != identity:
@@ -142,7 +154,7 @@ def main():
                            resume=args.resume, progress_file=args.progress_file)
     except KeyboardInterrupt:
         return 130
-    except (OSError, ValueError) as error:
+    except (OSError, ValueError, tarfile.TarError) as error:
         print(json.dumps({'status': 'needs_attention', 'error_type': type(error).__name__,
                           'reason': str(error)}, ensure_ascii=False))
         return 1

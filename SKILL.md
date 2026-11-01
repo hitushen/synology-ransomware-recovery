@@ -15,7 +15,7 @@ description: 群晖 DSM、黑群晖或 Linux NAS 遭 C3RB3R/.L0CK3D 勒索后的
 
 **脚本批量恢复和校验，agent 只处理异常与新线索。** 确定已选范围、独立目的盘、路线与验收条件后，脚本持续处理整批文件、保存逐项收据和进度；正常单文件失败登记后继续其他文件。agent 不逐项审批、不反复读成功日志、不为查看进度拆成小批次。
 
-读 [脚本批量执行](references/scripted-batches.md)。已保存的 Btrfs 导出 TAR 可用 `scripts/recovery_batch.py` 连续检查归档、解包与并行校验；`c3r_local.py validate --resume` 保存检查点、核对当前 SHA 并复用未变文件的成功解码，输出 `_exceptions.jsonl`。其他路线用对应已审阅执行器按清单批量运行，不能假称该 TAR 流水线通用于所有恢复类型。
+读 [脚本批量执行](references/scripted-batches.md)。已保存的 Btrfs 导出 TAR 可用 `scripts/recovery_batch.py` 连续检查归档、解包与并行校验；`c3r_local.py validate --resume` 保存检查点、核对当前 SHA 并复用未变文件的成功解码，按源文件所有候选完成情况实时输出 `_exceptions.jsonl`，同一批次全程加 OS 锁。其他路线用对应已审阅执行器按清单批量运行，不能假称该 TAR 流水线通用于所有恢复类型。
 
 代表性验证只在新样本、布局或恢复方法尚未适配时做一次；已验证方案持续执行，直到相关异常、取消、范围/空间或存储状态变化。必要的会话状态更新只读最新小快照/汇总，不触发历史日志重审或源目录重扫。
 

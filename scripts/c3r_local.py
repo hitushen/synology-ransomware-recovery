@@ -21,9 +21,11 @@ import hashlib
 import json
 import os
 import shutil
+import stat
 import subprocess
 import sys
 import tarfile
+import uuid
 from concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor, wait
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from recovery_progress import Progress, add_progress_options
@@ -32,8 +34,7 @@ IMG = {'.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp', '.tif', '.tiff', '.heic
 AV = {'.mp4', '.mov', '.m4v', '.avi', '.mkv', '.3gp', '.mts', '.m2ts', '.ts', '.wmv', '.flv', '.webm',
       '.mp3', '.flac', '.m4a', '.aac', '.wav', '.ogg'}
 # ffmpeg 输出到空 muxer 时，iPhone 可变帧率视频会触发这类时间戳警告，与数据完整性无关
-BENIGN = (b'non monotonically increasing dts to muxer', b'Last message repeated',
-          b'Decoding requested, but no decoder found')
+BENIGN = (b'non monotonically increasing dts to muxer', b'Last message repeated')
 
 
 def sha256(p):
@@ -60,17 +61,30 @@ def decode(p):
             return 'not_checked'
         try:
             with Image.open(p) as im:
-                im.load()
+                for index in range(getattr(im, 'n_frames', 1)):
+                    im.seek(index)
+                    im.load()
             return 'decoded'
         except Exception as e:
             return 'decode_error: %s' % e
     if ext in AV:
         if not shutil.which('ffmpeg'):
             return 'not_checked'
-        r = subprocess.run(['ffmpeg', '-v', 'error', '-xerror', '-i', str(p), '-f', 'null', '-'],
+        r = subprocess.run(['ffmpeg', '-v', 'error', '-xerror', '-i', str(p),
+                            '-map', '0:v?', '-map', '0:a?', '-f', 'null', '-'],
                            stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=False, encoding=None)
         err = b'\n'.join(l for l in r.stderr.splitlines() if not any(k in l for k in BENIGN))
         return 'decoded' if r.returncode == 0 and not err.strip() else 'decode_error: %s' % err[:300].decode('utf-8', 'replace')
+    if ext in ('.tar', '.gz'):
+        from verify_backup import validate
+        try:
+            # Archive auditors may emit periodic details; keep worker output
+            # out of the parent CLI's single structured result.
+            with open(os.devnull, 'w') as sink, contextlib.redirect_stdout(sink):
+                checked = validate(p)
+            return 'decoded' if checked.get('integrity_pass') else 'not_checked'
+        except Exception as error:
+            return 'decode_error: %s' % error
     return 'not_checked'
 
 
@@ -136,6 +150,13 @@ def known_index(dirs):
     return idx
 
 
+def file_identity(path):
+    info = path.lstat()
+    if not stat.S_ISREG(info.st_mode):
+        raise ValueError('Validation requires an independent regular file')
+    return (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
+
+
 def check(job):
     rec, p, ext_sha, known = job[:4]
     options = job[4] if len(job) > 4 else {}
@@ -143,7 +164,8 @@ def check(job):
            'bytes': rec.get('bytes')}
     # Always reread the current file; the extraction log may be stale after
     # patching, interruption or later modifications.
-    actual_sha = sha256(p) if p.is_file() and not p.is_symlink() else None
+    before = file_identity(p) if p.is_file() and not p.is_symlink() else None
+    actual_sha = sha256(p) if before is not None else None
     row['sha_ok'] = actual_sha == rec['sha256'] and p.exists()
     row['extraction_log_sha_matches'] = ext_sha == actual_sha if ext_sha is not None else None
     cached = options.get('cached') or {}
@@ -156,7 +178,30 @@ def check(job):
         row['cache_key'] = options['cache_key']
     if known:
         # 同名同大小可能有多个副本；任一一致即算一致，全部不一致才算不一致（本地副本本身也可能有坏块）
-        row['known_original_match'] = any(sha256(k) == rec['sha256'] for k in known)
+        row['known_original_match'] = False
+        for original in known:
+            original_before = file_identity(original)
+            original_sha = sha256(original)
+            if file_identity(original) != original_before:
+                raise ValueError('Known original changed during hash validation')
+            if original_sha == rec['sha256']:
+                if sha256(original) != original_sha or file_identity(original) != original_before:
+                    raise ValueError('Known original changed during hash validation')
+                row['known_original_match'] = True
+                break
+    try:
+        row['changed_during_check'] = before is not None and file_identity(p) != before
+        # Windows st_ctime is creation time; a same-size write followed by
+        # restored mtime can leave every stat field unchanged. After expensive
+        # checks, reread content rather than treating metadata as proof.
+        row['content_rechecked_after_validation'] = False
+        if row['sha_ok'] and not row['changed_during_check'] and (known or (not reused and row['decode'] == 'decoded')):
+            row['content_rechecked_after_validation'] = True
+            row['changed_during_check'] = sha256(p) != actual_sha or file_identity(p) != before
+    except (OSError, ValueError):
+        row['changed_during_check'] = before is not None
+    if row['changed_during_check']:
+        row.update(sha_ok=False, decode='file_changed', decode_reused=False)
     if not row['sha_ok'] or row.get('known_original_match') is False:
         row['verdict'] = 'bad'
     elif row.get('known_original_match') is True or row['decode'] == 'decoded':
@@ -169,9 +214,9 @@ def check(job):
 
 
 @contextlib.contextmanager
-def validation_lock(out):
+def validation_lock(out, lock_name='_validation.lock'):
     """One validator per output directory; OS releases the lock after a crash."""
-    path = Path(out) / '_validation.lock'
+    path = Path(out) / lock_name
     if path.is_symlink():
         raise ValueError('Validation lock cannot be a link')
     with path.open('a+b') as handle:
@@ -224,6 +269,38 @@ def cmd_validate(args):
         return _validate_batch(args, out)
 
 
+def select_source(rs):
+    good = [r for r in rs if r['verdict'] == 'ok']
+    pick = next((r for r in good if r.get('known_original_match')), good[0] if good else rs[0])
+    if not good:
+        kind = 'unverified' if any(r['verdict'] == 'unverified' for r in rs) else 'failed'
+    elif pick['status'] == 'exact':
+        kind = 'exact_' + ('decoded' if pick['decode'] == 'decoded' else 'sha_only')
+    elif pick['status'] == 'needs_inference':
+        kind = 'inferred_decoded' if pick['decode'] == 'decoded' else 'inferred_unverifiable'
+    else:
+        kind = 'partial_' + ('decoded' if pick['decode'] == 'decoded' else 'unverified')
+    if len(good) > 1 and pick['status'] != 'exact':
+        kind += '_multi_candidates_ok'
+    return dict(pick, outcome=kind, candidates=len(rs))
+
+
+def source_exception(row):
+    full_original = row.get('known_original_match') is True and row['sha_ok']
+    format_checked_exact = row['status'] == 'exact' and row['verdict'] == 'ok' and row['decode'] == 'decoded'
+    if full_original or format_checked_exact:
+        return None
+    reason = (row.get('error_type') or 'sha_mismatch_or_missing' if not row['sha_ok'] else
+              'known_original_mismatch' if row.get('known_original_match') is False else
+              row['decode'] if row['verdict'] == 'bad' else
+              'inferred_or_partial' if row['verdict'] == 'ok' else row['verdict'])
+    if row.get('changed_during_check'):
+        reason = 'file_changed'
+    return {'path': row['path'], 'member': row['member'], 'outcome': row['outcome'],
+            'reason': reason, 'detail': row.get('error'),
+            'action': 'review_unresolved_source', 'source_complete': True}
+
+
 def _validate_batch(args, out):
     with (out / '_c3r_manifest.jsonl').open(encoding='utf-8') as source:
         manifest = [json.loads(line) for line in source]
@@ -258,10 +335,28 @@ def _validate_batch(args, out):
         prepared.append((*job, {'cache_key': key, 'cached': cached.get(key)}))
     completed_rows = []
     accepted_sources = set()
+    outstanding = collections.Counter(job[0]['path'] for job in prepared)
+    source_rows = collections.defaultdict(list)
+    exceptions = []
+    validation_run_id = uuid.uuid4().hex
+    exception_path = out / '_exceptions.jsonl'
+    if exception_path.is_symlink():
+        raise ValueError('Exception report cannot be a link')
     workers = args.workers
     if workers < 1:
         raise ValueError('Workers must be positive')
-    with journal_path.open('a' if getattr(args, 'resume', False) else 'w', encoding='utf-8') as journal:
+    with journal_path.open('a' if getattr(args, 'resume', False) else 'w', encoding='utf-8') as journal, \
+            exception_path.open('w', encoding='utf-8') as exception_report:
+        def emit_exception(row):
+            row['validation_run_id'] = validation_run_id
+            exceptions.append(row)
+            exception_report.write(json.dumps(row, ensure_ascii=False) + '\n')
+            exception_report.flush()
+        for rec in manifest:
+            if 'member' not in rec and rec['status'] not in ('not_encrypted', 'cancelled'):
+                emit_exception({'path': rec.get('path'), 'outcome': 'not_extracted',
+                                'reason': rec['status'], 'action': 'review_unresolved_source',
+                                'source_complete': True})
         with ProcessPoolExecutor(workers) as ex:
             remaining = iter(enumerate(prepared))
             pending = {}
@@ -283,11 +378,18 @@ def _validate_batch(args, out):
                         rec = prepared[index][0]
                         row = {k: rec.get(k) for k in ('path', 'member', 'variant', 'status', 'bytes')}
                         row.update(sha_ok=False, decode='worker_error', verdict='bad',
-                                   error_type=type(error).__name__, decode_reused=False,
+                                   error_type=type(error).__name__, error=str(error)[:300], decode_reused=False,
                                    cache_key=prepared[index][4]['cache_key'])
                     completed_rows.append((index, row))
                     journal.write(json.dumps(row, ensure_ascii=False) + '\n')
                     journal.flush()
+                    source_rows[row['path']].append((index, row))
+                    outstanding[row['path']] -= 1
+                    if outstanding[row['path']] == 0:
+                        final_rows = [r for _, r in sorted(source_rows.pop(row['path']))]
+                        exception = source_exception(select_source(final_rows))
+                        if exception:
+                            emit_exception(exception)
                     if len(completed_rows) % 64 == 0:
                         os.fsync(journal.fileno())
                     if progress:
@@ -301,6 +403,7 @@ def _validate_batch(args, out):
                         progress.file_done(verified=row['decode']=='decoded', accepted=accepted)
                 fill()
         journal.flush(); os.fsync(journal.fileno())
+        exception_report.flush(); os.fsync(exception_report.fileno())
     # Live progress follows actual completion; output selection retains the
     # original manifest order for deterministic candidate preferences.
     rows = [row for _, row in sorted(completed_rows, key=lambda pair: pair[0])]
@@ -312,44 +415,19 @@ def _validate_batch(args, out):
         by_src[r['path']].append(r)
     outcomes, best = collections.Counter(), []
     for src, rs in by_src.items():
-        good = [r for r in rs if r['verdict'] == 'ok']
-        pick = next((r for r in good if r.get('known_original_match')), good[0] if good else rs[0])
-        if not good:
-            kind = 'unverified' if any(r['verdict'] == 'unverified' for r in rs) else 'failed'
-        elif pick['status'] == 'exact':
-            kind = 'exact_' + ('decoded' if pick['decode'] == 'decoded' else 'sha_only')
-        elif pick['status'] == 'needs_inference':
-            kind = 'inferred_decoded' if pick['decode'] == 'decoded' else 'inferred_unverifiable'
-        else:
-            kind = 'partial_' + ('decoded' if pick['decode'] == 'decoded' else 'unverified')
-        if len(good) > 1 and pick['status'] != 'exact':
-            kind += '_multi_candidates_ok'
-        outcomes[kind] += 1
-        best.append(dict(pick, outcome=kind, candidates=len(rs)))
+        pick = select_source(rs)
+        outcomes[pick['outcome']] += 1
+        best.append(pick)
     with open(out / '_best.jsonl', 'w', encoding='utf-8') as f:
         for r in best:
             f.write(json.dumps(r, ensure_ascii=False) + '\n')
     km = collections.Counter(r.get('known_original_match') for r in rows if 'known_original_match' in r)
     summary = {'sources': len(by_src), 'outcomes': dict(outcomes), 'not_extracted': dict(skipped),
+               'validation_run_id': validation_run_id,
                'decode_reused': sum(r.get('decode_reused', False) for r in rows),
                'known_original_match': {str(k): v for k, v in km.items()},
                'note': '结果基于当前文件回读 SHA；not_checked 单列未验证，已知原件不匹配须查明版本/损坏；'
                        'exact 仍需映射与适用的逐块校验，不能仅凭标签归因原件损坏'}
-    exceptions = []
-    for row in best:
-        full_original = row.get('known_original_match') is True and row['sha_ok']
-        format_checked_exact = row['status'] == 'exact' and row['verdict'] == 'ok' and row['decode'] == 'decoded'
-        if not full_original and not format_checked_exact:
-            exceptions.append({'path': row['path'], 'member': row['member'], 'outcome': row['outcome'],
-                               'reason': row.get('error_type') or row['verdict'],
-                               'action': 'review_unresolved_source'})
-    for rec in manifest:
-        if 'member' not in rec and rec['status'] not in ('not_encrypted', 'cancelled'):
-            exceptions.append({'path': rec.get('path'), 'outcome': 'not_extracted',
-                               'reason': rec['status'], 'action': 'review_unresolved_source'})
-    with (out / '_exceptions.jsonl').open('w', encoding='utf-8') as report:
-        for row in exceptions:
-            report.write(json.dumps(row, ensure_ascii=False) + '\n')
     summary['exceptions'] = len(exceptions)
     (out / '_summary.json').write_text(json.dumps(summary, ensure_ascii=False, indent=1), encoding='utf-8')
     print(json.dumps(summary, ensure_ascii=False, indent=1))

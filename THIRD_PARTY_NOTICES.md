@@ -40,3 +40,5 @@
 ## 本项目批量执行集成
 
 新增 `recovery_batch.py`、批量执行指引与10项合成回归由本项目编写，原创贡献按 MIT 提供。crt106 来源的 `c3r_local.py` 集成版增加有界并行队列、OS 校验锁、逐项检查点、当前 SHA 核对下的解码复用、单项异常继续与未决源文件清单，保留原 MIT 与版权。
+
+本轮增加多帧图片与全部音视频流验收、完整 TAR/gzip 候选校验、检查后内容回读、整批 OS 锁、按源文件实时异常清单及14项可靠性回归；原创修改按 MIT 提供，保留上游版权。图片/媒体解码使用可选 [Pillow](https://github.com/python-pillow/Pillow) / [FFmpeg](https://ffmpeg.org/)，不附其发行包或重新授权其许可。

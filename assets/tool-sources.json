@@ -13,9 +13,9 @@
       "file": "scripts/c3r_local.py",
       "source_repository": "https://github.com/crt106/c3rb3r-btrfs-recovery",
       "source_sha256": "68770f85170352388e354d296506e51e57dde3dafb504c4fa974f9f473b6e13c",
-      "bundled_sha256": "d7f1e66bb410008e024c553137c77f8f054a0e9fd6c980ff6be6db5feb989e7a",
-      "local_changes": "exclusive new output extraction; no traversal/links/overwrite; independent reread hashes; unverified and conflicting originals not accepted; live progress with completion-order updates and accepted-source deduplication; explicit binary subprocess decoding; bounded bulk validation queue; OS directory lock; per-item journal; SHA-checked decode reuse; isolated worker failures; unresolved-source exception list",
-      "bundled_text_lf_sha256": "d7f1e66bb410008e024c553137c77f8f054a0e9fd6c980ff6be6db5feb989e7a"
+      "bundled_sha256": "2386d15aa00149cf47ef239e88f43ce7531090a7f716931d0e978e39bd982a4f",
+      "local_changes": "exclusive new output extraction; no traversal/links/overwrite; independent reread hashes; unverified and conflicting originals not accepted; live progress with completion-order updates and accepted-source deduplication; explicit binary subprocess decoding; bounded bulk validation queue; OS directory lock; per-item journal; SHA-checked decode reuse; isolated worker failures; unresolved-source exception list; all image frames and AV streams; TAR/gzip candidate audit; post-validation content reread; source-complete incremental exceptions",
+      "bundled_text_lf_sha256": "2386d15aa00149cf47ef239e88f43ce7531090a7f716931d0e978e39bd982a4f"
     },
     {
       "file": "scripts/mkjob.py",
@@ -35,7 +35,9 @@
     "real-time stage progress and local live viewer",
     "unified saved-memory candidate checking, provenance, scoped byte-pattern scans and independent whole-copy validation",
     "typed empty process master-material outcome without weakening mapping verification",
-    "continuous Btrfs archive/extract/validate pipeline with checkpoints and exception-focused agent workflow"
+    "continuous Btrfs archive/extract/validate pipeline with checkpoints and exception-focused agent workflow",
+    "whole-batch OS lock; outer TAR validation independent from damaged candidate payloads; 14 synthetic validation-integrity regressions"
   ],
-  "nas_validation": "not performed in this skill creation task"
+  "nas_validation": "not performed in this skill creation task",
+  "updated_date": "2026-11-01"
 }

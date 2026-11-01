@@ -123,7 +123,7 @@ def bundle(stream):
         raise ValueError('Git PACK trailing hash mismatch')
     return objects
 
-def walk_tar(stream, kind='generic', depth=0):
+def walk_tar(stream, kind='generic', depth=0, *, inspect_contents=True):
     if depth > 3:
         raise ValueError('Unexpected nested archive depth')
     counts = collections.Counter()
@@ -145,7 +145,11 @@ def walk_tar(stream, kind='generic', depth=0):
                 continue
             result['regular_files'] += 1
             with archive.extractfile(member) as body:
-                if member.name.endswith('backup_information.yml'):
+                if not inspect_contents:
+                    size, _ = drain(body)
+                    if size != member.size:
+                        raise ValueError('Truncated archive member')
+                elif member.name.endswith('backup_information.yml'):
                     if member.size > 1024 * 1024:
                         raise ValueError('Oversized backup metadata')
                     text = body.read().decode('utf-8')
@@ -201,11 +205,11 @@ def walk_tar(stream, kind='generic', depth=0):
     if trailing < 1024 or audited.total % 512 or audited.last_nonzero >= end:
         raise ValueError('TAR requires two zero end blocks and only aligned zero trailing bytes')
     result.update(tar_trailing_bytes=trailing, tar_trailing_nonzero_bytes=0,
-                  tar_terminator_pass=True)
+                  tar_terminator_pass=True, contents_inspected=inspect_contents)
     result['top_level_counts'] = dict(counts)
     return result
 
-def validate(path, expected_sha256=None, progress=None):
+def validate(path, expected_sha256=None, progress=None, *, inspect_tar_contents=True):
     path = Path(path)
     if path.is_symlink() or not path.is_file():
         raise ValueError('Use a regular independent saved file')
@@ -217,7 +221,8 @@ def validate(path, expected_sha256=None, progress=None):
         progress.set_total(before.st_size, 1, path.name)
     if path.name.endswith('.tar'):
         with path.open('rb') as stream:
-            checked = walk_tar(ProgressReader(stream, progress) if progress else stream)
+            checked = walk_tar(ProgressReader(stream, progress) if progress else stream,
+                               inspect_contents=inspect_tar_contents)
         result.update(format='tar', validation=checked, integrity_pass=True)
     elif path.name.endswith('.gz'):
         with path.open('rb') as source, strict_gzip(ProgressReader(source, progress) if progress else source) as expanded:

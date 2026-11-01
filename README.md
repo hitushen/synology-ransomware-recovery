@@ -61,9 +61,9 @@ flowchart TD
 | Solar 工具接入 | 整理在线 PID 扫描、旧 dump 分析和已有会话材料三个入口及适用限制 |
 | Btrfs 恢复 | 自检、代数采样、旧 extent 规划、普查、导出与适用的块校验和检查 |
 | 副本与备份搜索 | 优先调查 Drive 仓库、独立原件、共享快照、ABB 与 VMM 的实际数据关系 |
-| 脚本批量流水线 | 保存的 Btrfs TAR 一次完成归档检查、导出与并行校验；保存检查点并生成异常清单 |
+| 脚本批量流水线 | Btrfs TAR 外层检查、导出与并行校验；批次锁、检查点及按源文件实时输出异常 |
 | 实时进度 | 阶段、文件、处理量、速度、ETA、候选检查和去重验收计数；终端与本地网页显示 |
-| 完整验收 | 区分传输一致、源块校验、完整格式检查、历史原件对照与业务验收 |
+| 完整验收 | 多帧图片、全部音视频轨及 TAR/gzip 检查；校验后内容回读防止变化误判，历史原件与业务验收分别登记 |
 
 ABB、Drive、未挂载阵列及客体文件系统的复杂解析是**有条件的恢复流程**，不是已经覆盖所有版本的一键工具。遇到不同布局，需要按现场验证或适配。
 
@@ -130,7 +130,7 @@ NAS IP：填写当前地址；发现时间：填写时间；是否重启：填�
 python -X utf8 scripts/recovery_batch.py --export export.tar --output new-batch-recovery --workers 2 --known independent-originals --progress-file new-batch-progress.json
 ```
 
-没有独立原件时省略 `--known`。脚本完整检查归档、解包、并行校验，并生成 `batch-state.json` 与仅包含未决源文件的 `_exceptions.jsonl`；普通文件失败不阻断其他任务。已完成批次不重复启动，校验中断后可 `--resume`，当前 SHA 仍核对，只复用字节未变的成功解码。
+没有独立原件时省略 `--known`。脚本完整检查外层 TAR、解包、并行校验，并生成 `batch-state.json` 与仅包含未决源文件的 `_exceptions.jsonl`。单个候选 gzip/TAR 损坏在文件校验阶段登记，其他文件继续；外层传输归档截断仍会停止解包。每个源文件所有候选完成后立即输出异常，不等整批结束；同一批次全程加 OS 锁，拒绝第二个并行进程。已完成批次不重复启动，校验中断后可 `--resume`，当前 SHA 仍核对，只复用字节未变的成功解码。
 
 当前流水线针对保存的 Btrfs 导出格式，其他路线使用各自已审阅执行器按清单批量运行。详细分工、断点条件和验收范围见 [脚本批量执行](references/scripted-batches.md)。
 
@@ -253,11 +253,12 @@ python -X utf8 scripts/recovery_progress.py watch new-export-progress.json new-a
 - 10项实时进度测试：百分比/速度/ETA、未知总量、状态文件保护、网页转义、字节管道、失败状态与验收去重。
 - 17项内存检测测试：真实合成进程映射与 QEMU 页表提取、跨窗口扫描、LiME 空洞、候选去重、错误 IV、完整副本验证、未适配/缺页与阴性区分、输入保护、秘密输出隔离及无加密正文边界。
 - 10项批量执行测试：断点与解码复用、当前内容变化、单项失败继续、末条检查点截断修复、候选异常去重、原件变化、连续流水线、中断恢复与真实多进程执行。
+- 14项验收可靠性回归：真实多帧图片、多轨视频及损坏后帧、检查中改写/替换、原件变化、损坏候选不阻断其他文件、外层截断拒绝、归档解码静默输出、实际跨进程锁与实时异常去重。
 - 独立场景复核和技能结构/引用检查。
 
 上述测试以独立的本地合成材料执行。恢复案例的证据与这些软件测试分别登记；**Solar 二进制只完成官方来源获取、SHA-256 与静态检查，未由本次技能构建执行实机验收。** Linux 现场操作与不同 RAID、缓存、dump、备份版本仍需现场验证。
 
-在干净分析机安装解密所需依赖后，可从本技能根目录复现50项测试：
+在干净分析机安装解密所需依赖后，可从本技能根目录复现64项测试（可选 Pillow、ffmpeg 未安装时跳过相应媒体测试）：
 
 ```sh
 python -X utf8 -m unittest discover -s tests -v
@@ -306,6 +307,7 @@ synology-ransomware-recovery/
 
 - [Microsoft / AVML](https://github.com/microsoft/avml)：物理 Linux 内存采集的可选工具；是否适用当前 DSM 内核须现场核实。
 - [504ensicsLabs / LiME](https://github.com/504ensicsLabs/LiME)：可选内存采集及 LiME 转储格式参考；技能内的 `inspect_lime.py` 检查对应的段头与地址范围。
+- [Pillow](https://github.com/python-pillow/Pillow) 与 [FFmpeg](https://ffmpeg.org/)：干净分析机上的可选图片、音视频全帧解码器；本技能不附其发行包。
 - [Botan](https://github.com/randombit/botan/blob/master/src/tests/data/stream/chacha.vec)：公开 ChaCha 测试向量来源，用于算法验证参考；未集成 Botan 库。
 - [CGSecurity / TestDisk、PhotoRec](https://www.cgsecurity.org/wiki/TestDisk)与 [GNU ddrescue](https://www.gnu.org/software/ddrescue/)：镜像恢复及物理读错误处理的可选工具参考，未附程序。
 

@@ -35,9 +35,9 @@ if result.returncode:
 
 ## 批量流水线与校验检查点
 
-保存的 Btrfs 导出 TAR 使用 `recovery_batch.py --export EXPORT.tar --output NEW_BATCH --workers 2`，一次完成完整归档检查、导出落盘和并行校验。`batch-state.json` 记录阶段；校验结果逐项保存到 `_validation_journal.jsonl`，不在中断后丢掉全部已完成检查。
+保存的 Btrfs 导出 TAR 使用 `recovery_batch.py --export EXPORT.tar --output NEW_BATCH --workers 2`，一次完成完整外层 TAR 检查、导出落盘和并行校验；候选内部的归档完整性在文件阶段逐项检查，单个坏候选不阻断其他文件。`batch-state.json` 记录阶段；校验结果逐项保存到 `_validation_journal.jsonl`，不在中断后丢掉全部已完成检查。
 
-`c3r_local.py validate DIR --resume --workers 2` 会核对当前文件与必要的原件 SHA，仅复用同一记录/验证器版本/字节对应的成功完整解码。普通单文件异常写入失败项并继续其他任务；最终 `_exceptions.jsonl` 只包含未解决的源文件，不把已有合格候选的其他坏候选逐项交给 agent。
+`c3r_local.py validate DIR --resume --workers 2` 会核对当前文件与必要的原件 SHA，仅复用同一记录/验证器版本/字节对应的成功完整解码。普通单文件异常写入失败项并继续其他任务；每个源文件所有候选结束后实时写入 `_exceptions.jsonl`，只包含未解决的源文件，不把已有合格候选的其他坏候选逐项交给 agent。
 
 agent 只读取异常和相关证据，按失败原因或新线索安排补充任务。已完成批次不反复重跑；导出未完成则保留部分结果，在新目的目录重试相关范围，不能伪称任意 TAR 已实现字节级续传。
 
@@ -53,6 +53,8 @@ agent 只读取异常和相关证据，按失败原因或新线索安排补充�
 | 文件头、预览、UTF-8/语法解析、像素等价 | 各自的有限证据，不自动等于完整原件 |
 
 gzip 必须读至 EOF 并核对 CRC/ISIZE、截断与额外流；TAR 验证每个 header、成员实际长度、终止块与尾部，不能以列出目录代替读全 payload。数据库、VM、容器按真实版本验收；容器 rootfs 导出可能遗漏 bind mounts，完整归档不证明备份制作时包含全部业务。
+
+图片校验覆盖所列图片的全部可枚举帧/页，媒体校验映射全部音视频轨。完整解码或原件对照后回读候选内容，元数据未变不能替代当前 SHA；保持验收输入静止，后续变化需再校验。
 
 集成版 `verify_backup.py FILE.tar[.gz]` 审计完整 TAR 结束与零尾部，gzip 拒绝截断、拼接流和额外字节；嵌套归档同样检查。`c3r_local.py validate NEW_DIR` 重新回读当前输出 SHA，未检查格式单列 unverified，已知原件不匹配不算通过。其他格式不支持时执行对应验证器并记录；不得把没有正文验证的文件强行接受。
 
