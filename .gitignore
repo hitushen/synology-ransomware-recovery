@@ -51,3 +51,11 @@ Thumbs.db
 **/scan-report.json
 **/capture.json
 **/verification-*.plain
+
+# Private batch outputs and checkpoints
+/new-batch*/
+**/batch-state.json
+**/_validation_journal.jsonl
+**/_validation.lock
+**/_exceptions.jsonl
+**/progress-*.json

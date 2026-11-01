@@ -1,0 +1,62 @@
+# 脚本批量恢复与校验，agent 处理异常和新线索
+
+适用：恢复路线、样本/映射和目标范围已经明确，需要连续处理大量文件。先保全易失材料并完成必要的路线适配；同一已验证布局不为每个目录、每轮进度或每个小批次重复做试验。
+
+## 分工与调度
+
+- **agent 一次确定**：已选目录清单、优先级、取消项、独立目的盘与空间、恢复路线、验证条件、脚本版本及合理并发。沿用 SSH 或 Telnet；不要求切换协议，也不在源卷写作业、日志或恢复结果。
+- **脚本连续执行**：按清单批量读取/导出、落盘、独立 SHA 与完整格式/原件校验、保存逐项收据、进度和异常。普通单文件失败留记录并继续其他文件，不等待 agent 逐项批准。
+- **agent 只处理需要判断的事项**：未知布局/格式、缺段、坏盘或存储层变化、密钥/marker 不匹配、失败聚集、空间或权限异常、断流、取消，以及新的副本/旧根/密钥线索。读取相关异常和必要上下文，用稳定 ID 或偏移记录已处理位置。
+- **进度由脚本与查看器显示**：必要的会话更新仅使用最新小快照/汇总；不要借更新进度反复读历史日志、重新盘点源目录或拆批次。静止快照可能是大文件读取/解码，先检查任务状态与真实 I/O。
+
+批次按实际源布局、目的盘、权限、容量和验收条件组织。脚本内部有界任务队列属于执行细节，不需要 agent 按每2个、10个或几十个文件反复启动新任务。只有范围/布局变化或出现实质风险，才暂停相关组；其他已确认组继续。
+
+## 已保存 Btrfs 导出归档的连续流水线
+
+`recovery_batch.py` 接入本技能现有 Btrfs 导出格式：一个未压缩 TAR 中包含 `_c3r_manifest.jsonl` 和各候选成员。它在独立分析机依次检查完整归档、解包、并行校验，最后生成摘要与仅包含未决源文件的异常清单。
+
+```sh
+python -X utf8 scripts/recovery_batch.py --export export.tar --output new-batch-recovery --workers 2 --known independent-originals --progress-file new-batch-progress.json
+```
+
+没有独立原件时省略 `--known`，仍进行支持的完整格式测试，未检查格式的文件保留未验证状态。未知/推测/部分结果不计为完整恢复；同一源文件的坏 prev 候选在另一个候选已通过原件对照时，不单独触发人工异常。
+
+当前流水线使用保存的 Btrfs TAR，不自动连接 NAS、执行 Solar、进行数据库还原或运行用户程序。在线 Btrfs 按完整已选清单用 `mkjob.py --list ... -- extract @LIST ...` 导出，可靠传输到独立主机后交给本流水线。Drive、密钥解密、离线 extent 等路线使用相应已审阅执行器批量运行；不能声称此 TAR 流水线已通用于全部格式和工具。
+
+查看进度：
+
+```sh
+python -X utf8 scripts/recovery_progress.py watch new-batch-progress.json
+```
+
+省略 `--progress-file` 时创建独立任务快照，路径记在 `batch-state.json` 中。查看器刷新不触发 agent 调度或额外源盘扫描。
+
+## 中断与继续
+
+批次根目录保存 `batch-state.json`，候选目录保存 `_validation_journal.jsonl`、`_summary.json`、`_best.jsonl` 和 `_exceptions.jsonl`。
+
+```sh
+python -X utf8 scripts/recovery_batch.py --export export.tar --output new-batch-recovery --resume --workers 2 --progress-file resumed-batch-progress.json
+```
+
+- **校验阶段中断**：保留导出与解包结果，继续校验；原件目录从检查点继承。逐项校验结果实时落日志，不到结束才保存。
+- **源文件已校验且字节未变**：继续校验时仍回读当前候选 SHA 和必要的原件 SHA；仅复用与同一记录、验证器版本和字节对应的成功完整解码，避免重复耗时解码。元数据相同不能代替当前内容摘要。
+- **字节、原件或验证条件变化**：不沿用原来的通过结论。增加新的 `--known` 目录时可重新执行校验；其他新线索针对相关项生成补充任务，不把整批已完成文件反复排队。
+- **批次已经完成**：`--resume` 返回 `already_completed` 和原验证时间，明确 `new_checks_run=false`；这是历史收据，不宣称重新检查了后来变化的文件。要重新检查现有候选，用下方校验命令。
+- **导出/解包阶段中断或源归档变化**：保留部分结果，不覆盖源文件或已写成员。更换新批次目录重试有证据支持的导出；不能宣称实现了任意断流 TAR 的字节级续传。
+
+对现有候选目录继续检查：
+
+```sh
+python -X utf8 scripts/c3r_local.py validate new-batch-recovery/candidates --resume --workers 2 --progress-file resumed-validation-progress.json
+```
+
+省略 `--resume` 会重新做完整检查。每次恢复使用新的进度文件，既有工作结果与检查点均保留。校验器对同一目的目录加 OS 文件锁；同一批次不启动第二个并行校验器。
+
+## 异常与验收
+
+`_exceptions.jsonl` 只列出未解决的源文件：导出未取得、校验失败、未知格式、推测/部分结果及未适配异常。worker 的普通读取/解析异常转为失败项，其他任务继续；执行器整体故障保存检查点后交给 agent。
+
+agent 从异常清单选出值得处理的组，标明原因、已有证据、新线索和下一步。没有新材料，不自动无限重试同一个失败对象，也不重审所有成功日志。已完成/已取消任务不重新入队；多个候选按原文件身份去重。
+
+`completed` 表示本流水线没有所列未决源文件；`completed_with_exceptions` 表示正常流程已跑完但还有未决项，CLI 退出码2。退出码0、文件总数和100%阶段进度都不单独证明全部数据、映射或业务完整。报告继续注明原件 SHA、完整格式、源块校验及业务检查各自的覆盖范围。

@@ -37,7 +37,7 @@ Docker 可写克隆/VMM 子卷不是天然的共享快照；PVE 快照不会自�
 
 原理见 [上游原理](btrfs-principles.md)，环境问题见 [兼容说明](btrfs-compatibility.md)，异常见 [常见问题](btrfs-pitfalls.md)。这些是上游历史资料；本技能的 [验证边界](btrfs-recovery_CN.md) 与实际检查结果优先，不能沿用“标签 exact 即历史原件正确”“失败小文件永无可能”等绝对结论。
 
-挂载模式：`preflight` → `env` → 跨共享采样 `gens` → 已知原件单文件 `plan/extract/csum` → `survey` → 小批导出/验收 → 按需扩大。`scripts/mkjob.py` 与 `c3r_btrfs.py` 在同一目录，作业由 stdin 送可信入口，输出由独立主机接收。
+挂载模式：`preflight` → `env` → 跨共享采样 `gens` → 必要时一次代表性 `plan/extract/csum` → `survey` → 已选清单脚本批量导出/校验 → 异常或新线索处理。`scripts/mkjob.py` 与 `c3r_btrfs.py` 在同一目录，作业由 stdin 送可信入口，输出由独立主机接收。
 
 - `preflight` 有的 FAIL 会返回退出码 0，检查各项实际内容，必须通过所需端到端映射与校验和自检；被跳过的检查不能算通过。
 - 该上游 Btrfs 规划器的 `formula_ranges` 只支持分段 0x25 参数 **10**；本技能 `file_layout.py` 的算法还覆盖已逆向的其他参数，但不能凭这个直接宣称 Btrfs 规划器已支持参数20。遇到不同参数，适配真实边界、尾部和全部映射，再用独立正负例及源样本验证。

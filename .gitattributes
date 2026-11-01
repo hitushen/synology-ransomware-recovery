@@ -1,0 +1,6 @@
+*.py text eol=lf
+*.md text eol=lf
+*.yaml text eol=lf
+*.json text eol=lf
+LICENSE text eol=lf
+assets/solar/c3rb3r_memscan.sys -text

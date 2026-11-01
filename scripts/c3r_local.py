@@ -15,6 +15,7 @@
 """
 import argparse
 import collections
+import contextlib
 import gzip
 import hashlib
 import json
@@ -23,7 +24,7 @@ import shutil
 import subprocess
 import sys
 import tarfile
-from concurrent.futures import ProcessPoolExecutor, as_completed
+from concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor, wait
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from recovery_progress import Progress, add_progress_options
 
@@ -136,7 +137,8 @@ def known_index(dirs):
 
 
 def check(job):
-    rec, p, ext_sha, known = job
+    rec, p, ext_sha, known = job[:4]
+    options = job[4] if len(job) > 4 else {}
     row = {'path': rec['path'], 'member': rec['member'], 'variant': rec['variant'], 'status': rec['status'],
            'bytes': rec.get('bytes')}
     # Always reread the current file; the extraction log may be stale after
@@ -144,7 +146,14 @@ def check(job):
     actual_sha = sha256(p) if p.is_file() and not p.is_symlink() else None
     row['sha_ok'] = actual_sha == rec['sha256'] and p.exists()
     row['extraction_log_sha_matches'] = ext_sha == actual_sha if ext_sha is not None else None
-    row['decode'] = decode(p) if row['sha_ok'] else 'missing'
+    cached = options.get('cached') or {}
+    reused = (row['sha_ok'] and cached.get('sha_ok') is True
+              and cached.get('verdict') == 'ok' and cached.get('decode') == 'decoded'
+              and cached.get('cache_key') == options.get('cache_key'))
+    row['decode'] = 'decoded' if reused else decode(p) if row['sha_ok'] else 'missing'
+    row['decode_reused'] = bool(reused)
+    if 'cache_key' in options:
+        row['cache_key'] = options['cache_key']
     if known:
         # 同名同大小可能有多个副本；任一一致即算一致，全部不一致才算不一致（本地副本本身也可能有坏块）
         row['known_original_match'] = any(sha256(k) == rec['sha256'] for k in known)
@@ -159,14 +168,71 @@ def check(job):
     return row
 
 
+@contextlib.contextmanager
+def validation_lock(out):
+    """One validator per output directory; OS releases the lock after a crash."""
+    path = Path(out) / '_validation.lock'
+    if path.is_symlink():
+        raise ValueError('Validation lock cannot be a link')
+    with path.open('a+b') as handle:
+        if not handle.tell():
+            handle.write(b'0'); handle.flush()
+        handle.seek(0)
+        if os.name == 'nt':
+            import msvcrt
+            msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+        else:
+            import fcntl
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        try:
+            yield
+        finally:
+            handle.seek(0)
+            if os.name == 'nt':
+                msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+            else:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+
+def load_validation_journal(path):
+    """Read once on explicit resume; discard only an interrupted final record."""
+    path = Path(path)
+    if not path.exists():
+        return {}
+    if path.is_symlink():
+        raise ValueError('Validation journal cannot be a link')
+    rows, end = {}, 0
+    with path.open('rb') as source:
+        while line := source.readline():
+            try:
+                row = json.loads(line)
+            except (ValueError, UnicodeError):
+                if line.endswith(b'\n'):
+                    raise ValueError('Invalid complete validation journal record')
+                break
+            rows[row['cache_key']] = row
+            end = source.tell()
+    if end != path.stat().st_size:
+        with path.open('r+b') as target:
+            target.truncate(end)
+    return rows
+
+
 def cmd_validate(args):
     out = Path(args.out)
-    manifest = [json.loads(l) for l in open(out / '_c3r_manifest.jsonl', encoding='utf-8')]
+    with validation_lock(out):
+        return _validate_batch(args, out)
+
+
+def _validate_batch(args, out):
+    with (out / '_c3r_manifest.jsonl').open(encoding='utf-8') as source:
+        manifest = [json.loads(line) for line in source]
     extracted = {}
     if (out / '_extracted.jsonl').exists():
-        for l in open(out / '_extracted.jsonl', encoding='utf-8'):
-            r = json.loads(l)
-            extracted[r['name']] = r['sha256']
+        with (out / '_extracted.jsonl').open(encoding='utf-8') as source:
+            for line in source:
+                record = json.loads(line)
+                extracted[record['name']] = record['sha256']
     known = known_index(args.known)
     jobs, skipped = [], collections.Counter()
     for rec in manifest:
@@ -178,23 +244,63 @@ def cmd_validate(args):
     progress = getattr(args, 'progress', None)
     if progress:
         progress.set_total(None, len(jobs))
+    journal_path = out / '_validation_journal.jsonl'
+    if journal_path.is_symlink():
+        raise ValueError('Validation journal cannot be a link')
+    cached = load_validation_journal(journal_path) if getattr(args, 'resume', False) else {}
+    version = hashlib.sha256(Path(__file__).read_bytes().replace(b'\r\n', b'\n')).hexdigest()
+    prepared = []
+    for job in jobs:
+        rec, path, extract_sha, originals = job
+        key = hashlib.sha256(json.dumps({'record': rec, 'extract_sha': extract_sha,
+              'known': [str(p.resolve()) for p in originals or []], 'validator': version},
+              sort_keys=True, ensure_ascii=False).encode('utf-8')).hexdigest()
+        prepared.append((*job, {'cache_key': key, 'cached': cached.get(key)}))
     completed_rows = []
     accepted_sources = set()
-    with ProcessPoolExecutor(args.workers) as ex:
-        futures = {ex.submit(check, job): index for index, job in enumerate(jobs)}
-        for future in as_completed(futures):
-            row = future.result()
-            completed_rows.append((futures[future], row))
-            if progress:
-                progress.current_file = row['member']
-                accepted = (row.get('known_original_match') is True and row['sha_ok']
-                            and row['path'] not in accepted_sources)
-                if accepted:
-                    accepted_sources.add(row['path'])
-                if row['verdict']=='bad':
-                    progress.failed_files += 1
-                progress.file_done(verified=row['decode']=='decoded',
-                                   accepted=accepted)
+    workers = args.workers
+    if workers < 1:
+        raise ValueError('Workers must be positive')
+    with journal_path.open('a' if getattr(args, 'resume', False) else 'w', encoding='utf-8') as journal:
+        with ProcessPoolExecutor(workers) as ex:
+            remaining = iter(enumerate(prepared))
+            pending = {}
+            def fill():
+                while len(pending) < workers*2:
+                    try:
+                        index, job = next(remaining)
+                    except StopIteration:
+                        return
+                    pending[ex.submit(check, job)] = index
+            fill()
+            while pending:
+                done, _ = wait(pending, return_when=FIRST_COMPLETED)
+                for future in done:
+                    index = pending.pop(future)
+                    try:
+                        row = future.result()
+                    except Exception as error:
+                        rec = prepared[index][0]
+                        row = {k: rec.get(k) for k in ('path', 'member', 'variant', 'status', 'bytes')}
+                        row.update(sha_ok=False, decode='worker_error', verdict='bad',
+                                   error_type=type(error).__name__, decode_reused=False,
+                                   cache_key=prepared[index][4]['cache_key'])
+                    completed_rows.append((index, row))
+                    journal.write(json.dumps(row, ensure_ascii=False) + '\n')
+                    journal.flush()
+                    if len(completed_rows) % 64 == 0:
+                        os.fsync(journal.fileno())
+                    if progress:
+                        progress.current_file = row['member']
+                        accepted = (row.get('known_original_match') is True and row['sha_ok']
+                                    and row['path'] not in accepted_sources)
+                        if accepted:
+                            accepted_sources.add(row['path'])
+                        if row['verdict'] == 'bad':
+                            progress.failed_files += 1
+                        progress.file_done(verified=row['decode']=='decoded', accepted=accepted)
+                fill()
+        journal.flush(); os.fsync(journal.fileno())
     # Live progress follows actual completion; output selection retains the
     # original manifest order for deterministic candidate preferences.
     rows = [row for _, row in sorted(completed_rows, key=lambda pair: pair[0])]
@@ -225,11 +331,29 @@ def cmd_validate(args):
             f.write(json.dumps(r, ensure_ascii=False) + '\n')
     km = collections.Counter(r.get('known_original_match') for r in rows if 'known_original_match' in r)
     summary = {'sources': len(by_src), 'outcomes': dict(outcomes), 'not_extracted': dict(skipped),
+               'decode_reused': sum(r.get('decode_reused', False) for r in rows),
                'known_original_match': {str(k): v for k, v in km.items()},
                'note': '结果基于当前文件回读 SHA；not_checked 单列未验证，已知原件不匹配须查明版本/损坏；'
                        'exact 仍需映射与适用的逐块校验，不能仅凭标签归因原件损坏'}
+    exceptions = []
+    for row in best:
+        full_original = row.get('known_original_match') is True and row['sha_ok']
+        format_checked_exact = row['status'] == 'exact' and row['verdict'] == 'ok' and row['decode'] == 'decoded'
+        if not full_original and not format_checked_exact:
+            exceptions.append({'path': row['path'], 'member': row['member'], 'outcome': row['outcome'],
+                               'reason': row.get('error_type') or row['verdict'],
+                               'action': 'review_unresolved_source'})
+    for rec in manifest:
+        if 'member' not in rec and rec['status'] not in ('not_encrypted', 'cancelled'):
+            exceptions.append({'path': rec.get('path'), 'outcome': 'not_extracted',
+                               'reason': rec['status'], 'action': 'review_unresolved_source'})
+    with (out / '_exceptions.jsonl').open('w', encoding='utf-8') as report:
+        for row in exceptions:
+            report.write(json.dumps(row, ensure_ascii=False) + '\n')
+    summary['exceptions'] = len(exceptions)
     (out / '_summary.json').write_text(json.dumps(summary, ensure_ascii=False, indent=1), encoding='utf-8')
     print(json.dumps(summary, ensure_ascii=False, indent=1))
+    return summary
 
 
 def _records(path):
@@ -315,6 +439,7 @@ def main():
     v.add_argument('out')
     v.add_argument('--known', action='append', help='已知原件目录（同名同大小即对照），可多次')
     v.add_argument('--workers', type=int, default=max(1, (os.cpu_count() or 2) // 2))
+    v.add_argument('--resume', action='store_true', help='Resume journal: reread SHA, reuse successful full decode for unchanged bytes')
     add_progress_options(v)
     a = sub.add_parser('apply-patch')
     a.add_argument('dir')

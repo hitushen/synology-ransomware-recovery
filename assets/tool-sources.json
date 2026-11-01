@@ -6,21 +6,24 @@
       "source_repository": "https://github.com/crt106/c3rb3r-btrfs-recovery",
       "source_sha256": "cc356fb6bf57b033a36a8b1115e6048364f0651e84b50f9f213a3a02d919eede",
       "bundled_sha256": "cc356fb6bf57b033a36a8b1115e6048364f0651e84b50f9f213a3a02d919eede",
-      "local_changes": "none"
+      "local_changes": "none",
+      "bundled_text_lf_sha256": "cc356fb6bf57b033a36a8b1115e6048364f0651e84b50f9f213a3a02d919eede"
     },
     {
       "file": "scripts/c3r_local.py",
       "source_repository": "https://github.com/crt106/c3rb3r-btrfs-recovery",
       "source_sha256": "68770f85170352388e354d296506e51e57dde3dafb504c4fa974f9f473b6e13c",
-      "bundled_sha256": "68e640bc07477af38044745dffb8d13b4bef03502bd47393d35dd0aa758081aa",
-      "local_changes": "exclusive new output extraction; no traversal/links/overwrite; independent reread hashes; unverified and conflicting originals not accepted; live progress with completion-order updates and accepted-source deduplication; explicit binary subprocess decoding"
+      "bundled_sha256": "d7f1e66bb410008e024c553137c77f8f054a0e9fd6c980ff6be6db5feb989e7a",
+      "local_changes": "exclusive new output extraction; no traversal/links/overwrite; independent reread hashes; unverified and conflicting originals not accepted; live progress with completion-order updates and accepted-source deduplication; explicit binary subprocess decoding; bounded bulk validation queue; OS directory lock; per-item journal; SHA-checked decode reuse; isolated worker failures; unresolved-source exception list",
+      "bundled_text_lf_sha256": "d7f1e66bb410008e024c553137c77f8f054a0e9fd6c980ff6be6db5feb989e7a"
     },
     {
       "file": "scripts/mkjob.py",
       "source_repository": "https://github.com/crt106/c3rb3r-btrfs-recovery",
       "source_sha256": "75adceb8fffda1dcdd0dac9c04a2f0a4afb90b727a79292fe0eeeace5a83f55f",
       "bundled_sha256": "75adceb8fffda1dcdd0dac9c04a2f0a4afb90b727a79292fe0eeeace5a83f55f",
-      "local_changes": "none"
+      "local_changes": "none",
+      "bundled_text_lf_sha256": "75adceb8fffda1dcdd0dac9c04a2f0a4afb90b727a79292fe0eeeace5a83f55f"
     }
   ],
   "existing_rescue_source": "https://github.com/soimy/c3rb3r-rescue",
@@ -31,7 +34,8 @@
     "bounded rescue port probes",
     "real-time stage progress and local live viewer",
     "unified saved-memory candidate checking, provenance, scoped byte-pattern scans and independent whole-copy validation",
-    "typed empty process master-material outcome without weakening mapping verification"
+    "typed empty process master-material outcome without weakening mapping verification",
+    "continuous Btrfs archive/extract/validate pipeline with checkpoints and exception-focused agent workflow"
   ],
   "nas_validation": "not performed in this skill creation task"
 }
